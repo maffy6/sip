@@ -356,6 +356,21 @@ func (r *Room) Connect(conf *config.Config, rconf RoomConfig) error {
 		OnDisconnected: func() {
 			r.stopped.Break()
 		},
+		OnRoomMoved: func(newRoomName string, newToken string) {
+			r.handleRoomMoved(conf, rconf, newRoomName, newToken)
+		},
+		OnReconnecting: func() {
+			r.log.Infow("room reconnecting (possibly due to migration)")
+		},
+		OnReconnected: func() {
+			r.log.Infow("room reconnected",
+				"currentRoom", r.p.RoomName)
+			// After reconnection, resubscribe to tracks if we were subscribed before
+			if r.subscribe.Load() {
+				r.log.Infow("resubscribing to tracks after reconnection")
+				r.Subscribe()
+			}
+		},
 	}
 
 	if rconf.Token == "" {
@@ -409,6 +424,27 @@ func (r *Room) Connect(conf *config.Config, rconf RoomConfig) error {
 
 	// Not subscribing to any tracks just yet!
 	return nil
+}
+
+// handleRoomMoved handles the room migration signal from LiveKit server.
+// This is called when MoveParticipant is invoked on this SIP participant.
+// The LiveKit Go SDK will automatically handle the disconnect and reconnect.
+func (r *Room) handleRoomMoved(conf *config.Config, rconf RoomConfig, newRoomName string, newToken string) {
+	oldRoom := r.p.RoomName
+	r.log.Infow("room migration starting",
+		"currentRoom", oldRoom,
+		"newRoom", newRoomName)
+
+	// Update local state with new room name
+	// The SDK has already received the RoomMovedResponse and will:
+	// 1. Disconnect from the old room
+	// 2. Automatically reconnect to the new room using the new token
+	// 3. Call OnReconnecting -> OnReconnected callbacks
+	r.p.RoomName = newRoomName
+
+	r.log.Infow("room migration in progress - waiting for SDK reconnection",
+		"oldRoom", oldRoom,
+		"newRoom", newRoomName)
 }
 
 func (r *Room) Subscribe() {
