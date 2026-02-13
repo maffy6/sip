@@ -168,6 +168,7 @@ type Room struct {
 	subscribed core.Fuse
 	stopped    core.Fuse
 	closed     core.Fuse
+	migrating  atomic.Bool // true when room migration is in progress
 	stats      *RoomStats
 }
 
@@ -354,21 +355,41 @@ func (r *Room) Connect(conf *config.Config, rconf RoomConfig) error {
 			},
 		},
 		OnDisconnected: func() {
-			r.stopped.Break()
+			// Don't break stopped fuse if we're in the middle of a migration
+			// During migration, the SDK disconnects from the old room as part of the
+			// migration process. We should only close the SIP call if this is a
+			// non-migration disconnect.
+			if !r.migrating.Load() {
+				r.log.Infow("room disconnected, closing SIP call")
+				r.stopped.Break()
+			} else {
+				r.log.Infow("room disconnected during migration - SDK will reconnect to new room")
+			}
 		},
 		OnRoomMoved: func(newRoomName string, newToken string) {
 			r.handleRoomMoved(conf, rconf, newRoomName, newToken)
 		},
 		OnReconnecting: func() {
-			r.log.Infow("room reconnecting (possibly due to migration)")
+			r.log.Infow("room reconnecting (possibly due to migration)",
+				"migrating", r.migrating.Load())
 		},
 		OnReconnected: func() {
 			r.log.Infow("room reconnected",
 				"currentRoom", r.p.RoomName)
+			
+			// Clear migrating flag now that reconnection is complete
+			wasMigrating := r.migrating.Load()
+			r.migrating.Store(false)
+			
 			// After reconnection, resubscribe to tracks if we were subscribed before
 			if r.subscribe.Load() {
 				r.log.Infow("resubscribing to tracks after reconnection")
 				r.Subscribe()
+			}
+			
+			if wasMigrating {
+				r.log.Infow("room migration completed successfully",
+					"currentRoom", r.p.RoomName)
 			}
 		},
 	}
@@ -435,9 +456,12 @@ func (r *Room) handleRoomMoved(conf *config.Config, rconf RoomConfig, newRoomNam
 		"currentRoom", oldRoom,
 		"newRoom", newRoomName)
 
+	// Set migrating flag to prevent OnDisconnected from closing the SIP call
+	r.migrating.Store(true)
+
 	// Update local state with new room name
 	// The SDK has already received the RoomMovedResponse and will:
-	// 1. Disconnect from the old room
+	// 1. Disconnect from the old room (OnDisconnected will fire)
 	// 2. Automatically reconnect to the new room using the new token
 	// 3. Call OnReconnecting -> OnReconnected callbacks
 	r.p.RoomName = newRoomName
