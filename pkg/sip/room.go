@@ -367,6 +367,9 @@ func (r *Room) Connect(conf *config.Config, rconf RoomConfig) error {
 			}
 		},
 		OnRoomMoved: func(newRoomName string, newToken string) {
+			r.log.Infow("=== OnRoomMoved callback triggered ===",
+				"newRoomName", newRoomName,
+				"hasToken", newToken != "")
 			r.handleRoomMoved(conf, rconf, newRoomName, newToken)
 		},
 		OnReconnecting: func() {
