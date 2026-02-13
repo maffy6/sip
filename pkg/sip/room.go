@@ -19,6 +19,8 @@ import (
 	"errors"
 	"io"
 	"math"
+	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -261,6 +263,18 @@ func (r *Room) participantLeft(rp *lksdk.RemoteParticipant) {
 	log.Debugw("participant left")
 }
 
+// isConnClosedErr returns true for connection-closed errors (broken pipe, connection reset, etc.)
+// that occur during room migration when the WebSocket is closing.
+func isConnClosedErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return errors.Is(err, net.ErrClosed) ||
+		strings.Contains(s, "broken pipe") ||
+		strings.Contains(s, "connection reset")
+}
+
 func (r *Room) subscribeTo(pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
 	log := r.roomLog.WithValues("participant", rp.Identity(), "pID", rp.SID(), "trackID", pub.SID(), "trackName", pub.Name())
 	if pub.Kind() != lksdk.TrackKindAudio {
@@ -269,12 +283,21 @@ func (r *Room) subscribeTo(pub *lksdk.RemoteTrackPublication, rp *lksdk.RemotePa
 	}
 	// During room migration, the WebSocket is closing so SetSubscribed will fail with "broken pipe".
 	// Skip subscription here; OnReconnected will call Subscribe() to resubscribe once reconnected.
+	// Note: OnRoomMoved runs in a goroutine, so subscribeTo can fire before migrating is set.
 	if r.migrating.Load() {
 		log.Debugw("skipping track subscription during migration - will resubscribe after reconnection")
 		return
 	}
 	log.Debugw("subscribing to a track")
 	if err := pub.SetSubscribed(true); err != nil {
+		// Handle race: SDK calls OnRoomMoved in a goroutine, so we may hit broken pipe before
+		// migrating is set. Treat connection-closed errors as migration and set migrating=true so
+		// subsequent subscribeTo calls skip; OnReconnected will resubscribe.
+		if isConnClosedErr(err) {
+			r.migrating.Store(true)
+			log.Debugw("subscription failed during migration (connection closed) - will resubscribe after reconnection", "error", err)
+			return
+		}
 		log.Errorw("cannot subscribe to the track", err)
 		return
 	}
