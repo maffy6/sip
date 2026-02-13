@@ -514,9 +514,16 @@ func (r *Room) Connect(conf *config.Config, rconf RoomConfig) error {
 
 // handleRoomMoved handles the room migration signal from LiveKit server.
 // This is called when MoveParticipant is invoked on this SIP participant.
-// The LiveKit Go SDK will automatically handle the disconnect and reconnect.
+//
+// The server sends RoomMovedResponse (with new token) then LeaveRequest with RESUME action.
+// The SDK's OnTokenRefresh stores the new token, and OnLeave(RESUME) triggers resumeConnection,
+// which reconnects the WebSocket to the new room. OnReconnecting and OnReconnected fire.
 func (r *Room) handleRoomMoved(conf *config.Config, rconf RoomConfig, newRoomName string, newToken string) {
 	oldRoom := r.p.RoomName
+	if newToken == "" {
+		r.log.Warnw("room migration received empty token - reconnection may fail",
+			"oldRoom", oldRoom, "newRoom", newRoomName)
+	}
 	r.log.Infow("room migration starting",
 		"currentRoom", oldRoom,
 		"newRoom", newRoomName)
@@ -525,10 +532,6 @@ func (r *Room) handleRoomMoved(conf *config.Config, rconf RoomConfig, newRoomNam
 	r.migrating.Store(true)
 
 	// Update local state with new room name
-	// The SDK has already received the RoomMovedResponse and will:
-	// 1. Disconnect from the old room (OnDisconnected will fire)
-	// 2. Automatically reconnect to the new room using the new token
-	// 3. Call OnReconnecting -> OnReconnected callbacks
 	r.p.RoomName = newRoomName
 
 	r.log.Infow("room migration in progress - waiting for SDK reconnection",
