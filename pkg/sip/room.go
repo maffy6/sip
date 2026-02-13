@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/frostbyte73/core"
@@ -269,10 +270,11 @@ func isConnClosedErr(err error) bool {
 	if err == nil {
 		return false
 	}
-	s := err.Error()
 	return errors.Is(err, net.ErrClosed) ||
-		strings.Contains(s, "broken pipe") ||
-		strings.Contains(s, "connection reset")
+		errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		strings.Contains(err.Error(), "broken pipe") ||
+		strings.Contains(err.Error(), "connection reset")
 }
 
 func (r *Room) subscribeTo(pub *lksdk.RemoteTrackPublication, rp *lksdk.RemoteParticipant) {
