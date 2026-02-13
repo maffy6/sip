@@ -521,7 +521,7 @@ func (r *Room) Connect(conf *config.Config, rconf RoomConfig) error {
 func (r *Room) handleRoomMoved(conf *config.Config, rconf RoomConfig, newRoomName string, newToken string) {
 	oldRoom := r.p.RoomName
 	if newToken == "" {
-		r.log.Warnw("room migration received empty token - reconnection may fail",
+		r.log.Warnw("room migration received empty token - reconnection may fail", nil,
 			"oldRoom", oldRoom, "newRoom", newRoomName)
 	}
 	r.log.Infow("room migration starting",
