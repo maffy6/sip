@@ -285,6 +285,9 @@ func (r *Room) Connect(conf *config.Config, rconf RoomConfig) error {
 		Identity: partConf.Identity,
 		Name:     partConf.Name,
 	}
+	
+	r.log.Infow("🔧 DEBUG: Setting up room callbacks with OnRoomMoved support")
+	
 	roomCallback := &lksdk.RoomCallback{
 		OnParticipantConnected: func(rp *lksdk.RemoteParticipant) {
 			log := r.roomLog.WithValues("participant", rp.Identity(), "pID", rp.SID())
