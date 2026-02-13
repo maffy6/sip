@@ -267,6 +267,12 @@ func (r *Room) subscribeTo(pub *lksdk.RemoteTrackPublication, rp *lksdk.RemotePa
 		log.Debugw("skipping non-audio track")
 		return
 	}
+	// During room migration, the WebSocket is closing so SetSubscribed will fail with "broken pipe".
+	// Skip subscription here; OnReconnected will call Subscribe() to resubscribe once reconnected.
+	if r.migrating.Load() {
+		log.Debugw("skipping track subscription during migration - will resubscribe after reconnection")
+		return
+	}
 	log.Debugw("subscribing to a track")
 	if err := pub.SetSubscribed(true); err != nil {
 		log.Errorw("cannot subscribe to the track", err)
