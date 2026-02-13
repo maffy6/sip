@@ -358,50 +358,40 @@ func (r *Room) Connect(conf *config.Config, rconf RoomConfig) error {
 			},
 		},
 		OnDisconnected: func() {
-			// Deprecated: Use OnDisconnectedWithReason instead
-			// This is kept for backward compatibility but should not close SIP call
-			// if we're migrating (checked via migrating flag or in OnDisconnectedWithReason)
-			if !r.migrating.Load() {
-				r.log.Infow("room disconnected, closing SIP call")
-				r.stopped.Break()
-			} else {
-				r.log.Infow("room disconnected during migration - SDK will reconnect to new room")
-			}
+			// NO-OP: This callback is deprecated and fires BEFORE OnDisconnectedWithReason
+			// All disconnect handling is done in OnDisconnectedWithReason below
+			// DO NOT add any logic here - it will break migration!
+			r.log.Debugw("OnDisconnected fired (deprecated, no action taken)")
 		},
 		OnDisconnectedWithReason: func(reason lksdk.DisconnectionReason) {
+			// This is the PRIMARY disconnect handler (OnDisconnected is deprecated/no-op)
 			// During migration, the SDK will:
 			// 1. Call OnRoomMoved (logs "room moved")
-			// 2. Send LeaveRequest with DISCONNECT action and MIGRATION reason
-			// 3. Call this OnDisconnectedWithReason callback
+			// 2. Send LeaveRequest with DISCONNECT + MIGRATION reason
+			// 3. Call this callback with reason="other reasons"
 			//
-			// We should NOT close the SIP call if this is migration-related,
-			// because the SDK will reconnect to the new room.
+			// We should NOT close the SIP call if this is migration-related
 			r.log.Infow("🔧 DEBUG: OnDisconnectedWithReason called",
 				"reason", string(reason),
 				"migrating", r.migrating.Load())
 			
 			// Be conservative: if the disconnect could be migration-related,
-			// keep the SIP call alive and let OnRoomMoved confirm migration
+			// keep the SIP call alive. The migrating flag or "other reasons" reason
+			// indicate a potential migration.
 			// Common migration-related reasons:
 			// - ParticipantRemoved: server removed the participant (migration)
-			// - OtherReason: catch-all that might include migration
-			if reason == lksdk.ParticipantRemoved || reason == lksdk.OtherReason {
-				r.log.Infow("disconnect might be migration-related - keeping SIP call alive",
+			// - OtherReason: catch-all that includes MIGRATION reason
+			if reason == lksdk.ParticipantRemoved || reason == lksdk.OtherReason || r.migrating.Load() {
+				r.log.Infow("disconnect is migration-related - keeping SIP call alive",
 					"reason", string(reason))
 				r.migrating.Store(true)
-				return
+				return  // Don't close SIP call!
 			}
 			
 			// For explicit non-migration disconnect reasons, close the SIP call
-			// only if we're not already in a migration state
-			if !r.migrating.Load() {
-				r.log.Infow("room disconnected (non-migration), closing SIP call",
-					"reason", string(reason))
-				r.stopped.Break()
-			} else {
-				r.log.Infow("room disconnected during migration - SDK will reconnect",
-					"reason", string(reason))
-			}
+			r.log.Infow("room disconnected (non-migration), closing SIP call",
+				"reason", string(reason))
+			r.stopped.Break()
 		},
 		OnRoomMoved: func(newRoomName string, newToken string) {
 			r.log.Infow("🔧 DEBUG: OnRoomMoved callback triggered",
